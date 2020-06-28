@@ -1,0 +1,119 @@
+ 
+val rdd = sc.textFile("wine_quality/winequality-red-noheader.csv").map(x => x.split(";"))
+ 
+val rdd1 = rdd.map( x => Array(x(0).toDouble,x(1).toDouble,x(2).toDouble,x(3).toDouble,x(4).toDouble,x(5).toDouble,x(6).toDouble,x(7).toDouble,x(8).toDouble,x(9).toDouble,x(10).toDouble,x(11).toDouble))
+ 
+import org.apache.spark.mllib.linalg.Vectors
+import org.apache.spark.mllib.regression.LabeledPoint
+
+val data = rdd1.map( r => {
+  val arr_size = r.size -1
+  val l = r(arr_size).toInt
+  val f = r.slice(0,arr_size-1)
+  LabeledPoint(l,Vectors.dense(f))
+})
+
+data.cache
+
+val sets = data.randomSplit(Array(0.8,0.2))
+val trainSet = sets(0)
+val testSet = sets(1)
+
+
+import org.apache.spark.mllib.regression.LinearRegressionWithSGD
+val model = LinearRegressionWithSGD.train(trainSet, 200, 0.1)
+----
+import org.apache.spark.mllib.regression.LinearRegressionWithSGD
+val alg = new LinearRegressionWithSGD()
+alg.setIntercept(true)
+alg.optimizer.setNumIterations(200)
+
+---- step size = 0.1
+alg.optimizer.setStepSize(0.1)
+val model = alg.run(trainSet)
+// model: intercept = NaN, numFeatures = 10
+
+---- step size = 0.01
+alg.optimizer.setStepSize(0.01)
+val model = alg.run(trainSet)
+// model: intercept = -3.46897496039916E91, numFeatures = 10
+
+val validPredicts = testSet.map(x => (model.predict(x.features),x.label))
+
+validPredicts.take(10)  // predict values are horrible
+// res15: Array[(Double, Double)] = Array((-9.003913862677021E94,5.0), (-6.24603706029235E94,7.0), (-3.134206296731395E94,5.0), (-2.062177741218425E95,5.0), (-5.163938355278231E94,4.0), (-2.1479464587458952E95,5.0), (-3.953999935231609E94,6.0), (-2.987127296386471E94,5.0), (-2.9576606882882766E95,5.0), (-1.411755377145479E95,5.0))
+
+---- step size = 0.001
+alg.optimizer.setStepSize(0.001)
+val model = alg.run(trainSet)
+model: intercept = 1.017931094696698, numFeatures = 10
+
+val validPredicts = testSet.map(x => (model.predict(x.features),x.label))
+
+validPredicts.take(10)
+// res21: Array[(Double, Double)] = Array((3.989960581696964,5.0), (3.976563997164233,7.0), (2.9998761577517836,5.0), (5.330831793715301,5.0), (3.1074159555611165,4.0), (5.279510067346175,5.0), (3.078666797585797,6.0), (3.4244141345039285,5.0), (8.628639631617965,5.0), (4.926449337964524,5.0))
+
+import org.apache.spark.mllib.evaluation.RegressionMetrics
+val validMetrics = new RegressionMetrics(validPredicts)
+validMetrics.rootMeanSquaredError  // 1.9032887740174542
+validMetrics.meanSquaredError  // 3.6225081573008637
+
+------------------------- Estimation is not good. Analyze the individual statistics 
+
+val vect = rdd1.map( x => Vectors.dense(x))
+
+import org.apache.spark.mllib.linalg.distributed.RowMatrix
+val wineMat = new RowMatrix(vect)
+val wineStats = wineMat.computeColumnSummaryStatistics()
+
+scala> wineStats.min
+res18: org.apache.spark.mllib.linalg.Vector = [4.6,0.12,0.0,0.9,0.012,1.0,6.0,0.99007,2.74,0.33,8.4,3.0]
+
+scala> wineStats.max
+res19: org.apache.spark.mllib.linalg.Vector = [15.9,1.58,1.0,15.5,0.611,72.0,289.0,1.00369,4.01,2.0,14.9,8.0]
+
+scala> wineStats.mean
+res20: org.apache.spark.mllib.linalg.Vector = [8.319637273295799,0.5278205128205145,0.27097560975609764,2.538805503439649,0.08746654158849286,15.874921826141357,46.46779237023142,0.9967466791744843,3.3111131957473443,0.6581488430268921,10.422983114446522,5.636022514071286]
+
+-------------------------- Decide to scale features because columns have different scales and then retrain the model 
+
+import org.apache.spark.mllib.feature.StandardScaler
+val scaler = new StandardScaler(true, true).fit(trainSet.map(x => x.features))
+ 
+val trainScaled = trainSet.map(x => LabeledPoint(x.label,scaler.transform(x.features)))
+val validScaled = testSet.map(x => LabeledPoint(x.label, scaler.transform(x.features)))
+
+import org.apache.spark.mllib.regression.LinearRegressionWithSGD
+val alg = new LinearRegressionWithSGD()
+alg.setIntercept(true)
+alg.optimizer.setNumIterations(200)
+
+---- step size = 0.1
+alg.optimizer.setStepSize(0.1)
+val model = alg.run(trainScaled)
+// model: intercept = 5.087535019991393, numFeatures = 10
+
+val validPredicts = validScaled.map(x => (model.predict(x.features),x.label))
+
+validPredicts.take(10)
+// res35: Array[(Double, Double)] = Array((4.670293688290321,5.0), (4.975541449665222,7.0), (5.266540418186671,5.0), (4.653296794467995,5.0), (4.306103720550225,4.0), (5.21810923639563,5.0), (5.2366070794891035,6.0), (5.4484039160289,5.0), (4.697814060582385,5.0), (4.848063502091406,5.0))
+
+import org.apache.spark.mllib.evaluation.RegressionMetrics
+val validMetrics = new RegressionMetrics(validPredicts)
+validMetrics.rootMeanSquaredError  // 0.8563274798271757
+validMetrics.meanSquaredError  // 0.733296752707162
+
+---- step size = 1.0 -- Chosen model due to minimum variability
+alg.optimizer.setStepSize(1.0)
+val model = alg.run(trainScaled)
+// model: intercept = 5.643571978444953, numFeatures = 10
+
+val validPredicts = validScaled.map(x => (model.predict(x.features),x.label))
+
+validPredicts.take(10)
+res45: Array[(Double, Double)] = Array((5.153174177843223,5.0), (5.567372298022656,7.0), (5.755643172387574,5.0), (5.136637874425281,5.0), (4.8300923107082,4.0), (5.775014639153684,5.0), (5.786547105602043,6.0), (6.036826069774819,5.0), (5.301645381016808,5.0), (5.345701686451816,5.0))
+
+val validMetrics = new RegressionMetrics(validPredicts)
+
+validMetrics.rootMeanSquaredError  // 0.6788479453876873
+validMetrics.meanSquaredError  // 0.46083453295708454
