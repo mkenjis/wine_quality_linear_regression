@@ -76,6 +76,97 @@ res19: org.apache.spark.mllib.linalg.Vector = [15.9,1.58,1.0,15.5,0.611,72.0,289
 wineStats.mean
 res20: org.apache.spark.mllib.linalg.Vector = [8.319637273295799,0.5278205128205145,0.27097560975609764,2.538805503439649,0.08746654158849286,15.874921826141357,46.46779237023142,0.9967466791744843,3.3111131957473443,0.6581488430268921,10.422983114446522,5.636022514071286]
 
+-------------------------- Calculate the column similarity matrix
+
+val vect = rdd1.map( x => Vectors.dense(x))
+
+import org.apache.spark.mllib.linalg.distributed.RowMatrix
+val wineMat = new RowMatrix(vect)
+
+val colsims = wineMat.columnSimilarities()
+val mat1 = colsims.toRowMatrix
+
+import org.apache.spark.mllib.linalg.distributed.MatrixEntry
+val transformedRDD = colsims.entries.map{case MatrixEntry(row: Long, col:Long, sim:Double) => ((row,col),sim)}
+
+val rep = transformedRDD.sortBy(_._1).map(x => ((x._1._1,x._1._2),x._2))
+
+var i = -1.0
+
+rep.foreach( x => {
+  val sim = x._2
+  if (x._1._1 != i) { println
+    print(f"$sim%.4f ")
+    i = x._1._1
+  } else print(f"$sim%.4f ")
+})
+
+
+0.9101 0.8751 0.8672 0.8711 0.8001 0.7856 0.9791 0.9712 0.9572 0.9725 0.9725   "fixed acidity" x quality
+       0.6655 0.8283 0.8433 0.7890 0.7872 0.9470 0.9495 0.8962 0.9355 0.9197   "volatile acidity" x quality
+              0.7506 0.7715 0.6586 0.6748 0.8125 0.7964 0.8319 0.8144 0.8226   "citric acid" x quality
+                     0.7828 0.7801 0.7706 0.8746 0.8714 0.8474 0.8718 0.8664   "residual sugar"  x quality
+                            0.7369 0.7318 0.8808 0.8739 0.8967 0.8655 0.8631   "chlorides" x quality
+                                   0.8938 0.8351 0.8360 0.8158 0.8269 0.8227   "free sulfur dioxide" x quality
+                                          0.8163 0.8136 0.7967 0.8000 0.7929   "total sulfur dioxide" x quality
+                                                 0.9989 0.9685 0.9947 0.9898   "density" x quality
+                                                        0.9651 0.9947 0.9884   "pH" x quality
+                                                               0.9658 0.9675   "sulphates" x quality
+                                                                      0.9916   "alcohol" x "quality"
+
+-------------------------- In the next analysis, it will consider only "fixed acidity", "volatile acidity", "density", "pH", "sulphates","alcohol" to quality		  
+																	  
+val data = rdd1.map( r => {
+  val arr_size = r.size
+  val l = r(arr_size-1).toInt
+  val f = Array(r(0),r(1),r(7),r(8),r(9),r(10))
+  LabeledPoint(l,Vectors.dense(f))
+})
+
+data.cache
+
+val sets = data.randomSplit(Array(0.8,0.2))
+val trainSet = sets(0)
+val testSet = sets(1)
+
+trainSet.cache
+
+import org.apache.spark.mllib.regression.LinearRegressionWithSGD
+val alg = new LinearRegressionWithSGD()
+alg.setIntercept(true)
+alg.optimizer.setNumIterations(200)
+
+---- step size = 0.1
+alg.optimizer.setStepSize(0.1)
+val model = alg.run(trainSet)
+model: intercept = 9.281747011595764E13, numFeatures = 6
+
+val validPredicts = testSet.map(x => (model.predict(x.features),x.label))
+
+validPredicts.take(10)  // predict values are horrible
+res13: Array[(Double, Double)] = Array((2.9916027833052085E15,5.0), (5.2083011004994825E14,5.0), (2.1721137212308112E15,5.0), (2.533426126205943E15,5.0), (2.400076857190313E15,5.0), (8.710356762010516E14,5.0), (2.7133221381754655E15,6.0), (1.4703574899636862E14,5.0), (1.5140524444303712E15,5.0), (1.9035731951854078E15,5.0))
+
+import org.apache.spark.mllib.evaluation.RegressionMetrics
+val validMetrics = new RegressionMetrics(validPredicts)
+validMetrics.rootMeanSquaredError  // 2.0014926325619645E15
+validMetrics.meanSquaredError  // 4.0059727581998234E30
+
+---- step size = 0.01
+alg.optimizer.setStepSize(0.01)
+val model = alg.run(trainSet)
+model: intercept = 1.0244668493496212, numFeatures = 6
+
+val validPredicts = testSet.map(x => (model.predict(x.features),x.label))
+
+validPredicts.take(10)  
+res17: Array[(Double, Double)] = Array((5.2033281092142305,5.0), (5.361820963442839,5.0), (4.999169971638653,5.0), (5.000866870748702,5.0), (4.953520520656063,5.0), (5.241740023457866,5.0), (5.102976560802815,6.0), (5.459981583793877,5.0), (5.447795322054186,5.0), (5.270471818790001,5.0))
+
+import org.apache.spark.mllib.evaluation.RegressionMetrics
+val validMetrics = new RegressionMetrics(validPredicts)
+validMetrics.rootMeanSquaredError  // 0.6853457086642035
+validMetrics.meanSquaredError  // 0.4696987403844393
+
+
 -------------------------- Decide to scale features because columns have different scales and then retrain the model 
 
 import org.apache.spark.mllib.feature.StandardScaler
