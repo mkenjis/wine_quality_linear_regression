@@ -78,6 +78,8 @@ res20: org.apache.spark.mllib.linalg.Vector = [8.319637273295799,0.5278205128205
 
 -------------------------- Calculate the column similarity matrix
 
+import org.apache.spark.mllib.linalg.Vectors
+
 val vect = rdd1.map( x => Vectors.dense(x))
 
 import org.apache.spark.mllib.linalg.distributed.RowMatrix
