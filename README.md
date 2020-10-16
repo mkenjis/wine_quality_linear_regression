@@ -1,5 +1,7 @@
 # wine_quality_linear_regression
 wine quality linear regression using MLlib
+- Source : UCI Machine Learning Repository
+- URL : https://archive.ics.uci.edu/ml/datasets/wine+quality
 
 # Purpose:
 - use wine quality dataset to train different linear regression models.
