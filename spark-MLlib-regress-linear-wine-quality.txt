@@ -176,13 +176,15 @@ validMetrics.rootMeanSquaredError  // 0.6853457086642035
 validMetrics.meanSquaredError  // 0.4696987403844393
 
 
--------------------------- Decide to scale features because columns have different scales and then retrain the model 
+----- Decide to scale features because columns have different scales and then retrain the model 
 
 import org.apache.spark.mllib.feature.StandardScaler
 val scaler = new StandardScaler(true, true).fit(trainSet.map(x => x.features))
  
 val trainScaled = trainSet.map(x => LabeledPoint(x.label,scaler.transform(x.features)))
 val validScaled = testSet.map(x => LabeledPoint(x.label, scaler.transform(x.features)))
+
+---- with MLlib Linear regression --------------
 
 import org.apache.spark.mllib.regression.LinearRegressionWithSGD
 val alg = new LinearRegressionWithSGD()
